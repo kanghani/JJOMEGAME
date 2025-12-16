@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Powerpuff Rush - Infinite Runner</title>
+    <style>
+        /* --- CSS 스타일 정의 --- */
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #2c3e50;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            overflow: hidden; /* 스크롤 방지 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: white;
+            user-select: none; /* 텍스트 선택 방지 */
+            -webkit-user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 800px;
+            height: 450px;
+            background-color: #87CEEB; /* 하늘색 배경 */
+            box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+            overflow: hidden;
+            border-radius: 10px;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* UI 오버레이 공통 스타일 */
+        .ui-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+        }
+
+        h1 {
+            font-size: 48px;
+            margin-bottom: 20px;
+            color: #f1c40f;
+            text-shadow: 2px 2px 0 #e67e22;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* 캐릭터 선택 그리드 */
+        .char-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .char-slot {
+            width: 80px;
+            height: 80px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 3px solid transparent;
+            border-radius: 10px;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .char-slot img {
+            width: 60px;
+            height: 60px;
+            object-fit: contain;
+        }
+
+        .char-slot:hover {
+            transform: scale(1.1);
+            background: rgba(255, 255, 255, 0.4);
+        }
+
+        .char-slot.selected {
+            border-color: #f1c40f;
+            background: rgba(241, 196, 15, 0.3);
+            transform: scale(1.1);
+            box-shadow: 0 0 15px #f1c40f;
+        }
+
+        /* 버튼 스타일 */
+        button {
+            padding: 15px 40px;
+            font-size: 24px;
+            background-color: #e74c3c;
+            color: white;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 5px 0 #c0392b;
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+
+        button:active {
+            transform: translateY(5px);
+            box-shadow: 0 0 0 #c0392b;
+        }
+
+        button:disabled {
+            background-color: #95a5a6;
+            box-shadow: none;
+            cursor: not-allowed;
+        }
+
+        #score-board {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            font-size: 32px;
+            font-weight: bold;
+            color: white;
+            text-shadow: 2px 2px 4px black;
+            z-index: 5;
+            display: none; /* 게임 시작 전엔 숨김 */
+        }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="800" height="450"></canvas>
+        <div id="score-board">SCORE: 0</div>
+
+        <div id="start-screen" class="ui-screen">
+            <h1>Powerpuff Rush</h1>
+            <p style="margin-bottom: 10px;">Select Your Character</p>
+            <div class="char-grid" id="char-grid">
+                </div>
+            <p id="loading-text" style="color: #ccc; font-size: 14px;">Loading Assets...</p>
+            <button id="start-btn" disabled>GAME START</button>
+            <p style="margin-top: 15px; font-size: 14px; opacity: 0.8;">
+                PC: Space/Up Arrow to Jump (Double Jump)<br>
+                Mobile: Touch to Jump
+            </p>
+        </div>
+
+        <div id="game-over-screen" class="ui-screen hidden">
+            <h1>GAME OVER</h1>
+            <p style="font-size: 24px; margin-bottom: 30px;">Final Score: <span id="final-score">0</span></p>
+            <button id="restart-btn">TRY AGAIN</button>
+        </div>
+    </div>
+
+    <script>
+        /**
+         * ------------------------------------------------------------------
+         * Game Configuration & Variables
+         * ------------------------------------------------------------------
+         */
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 게임 상태 상수
+        const STATE = {
+            START: 0,
+            PLAYING: 1,
+            GAMEOVER: 2
+        };
+
+        let currentState = STATE.START;
+        let gameFrame = 0;
+        let score = 0;
+        let gameSpeed = 5; // 초기 속도
+        let animationId;
+
+        // 이미지 자산 관리
+        const imageSources = [
+            'image_0.png', 'image_1.png', 'image_2.png', 
+            'image_3.png', 'image_4.png', 'image_5.png'
+        ];
+        const characterImages = [];
+        let imagesLoaded = 0;
+        let selectedCharIndex = 0;
+
+        // 물리 상수
+        const GRAVITY = 0.6;
+        const JUMP_FORCE = -12;
+        const GROUND_HEIGHT = 50; // 바닥 높이
+
+        // 게임 엔티티
+        let player;
+        let obstacles = [];
+
+        /**
+         * ------------------------------------------------------------------
+         * Class Definitions (Classes)
+         * ------------------------------------------------------------------
+         */
+
+        class Player {
+            constructor() {
+                this.width = 80;
+                this.height = 80;
+                this.x = 100; // 고정된 X 위치
+                this.y = canvas.height - GROUND_HEIGHT - this.height;
+                this.vy = 0; // 수직 속도
+                this.weight = GRAVITY;
+                this.jumpCount = 0; // 2단 점프 체크용
+                this.image = characterImages[selectedCharIndex];
+                this.frameY = 0;
+                this.runAngle = 0; // 달리는 애니메이션(위아래 움직임)용
+            }
+
+            update() {
+                // 달리기 애니메이션 (살짝 위아래로 움직임)
+                this.runAngle += 0.2;
+                let runOffset = 0;
+                
+                // 공중에 있지 않을 때만 달리기 모션 적용
+                if (this.onGround()) {
+                    runOffset = Math.sin(this.runAngle) * 5;
+                }
+
+                // 중력 적용
+                this.vy += this.weight;
+                this.y += this.vy;
+
+                // 바닥 충돌 처리
+                if (this.onGround()) {
+                    this.y = canvas.height - GROUND_HEIGHT - this.height;
+                    this.vy = 0;
+                    this.jumpCount = 0; // 점프 횟수 초기화
+                }
+            }
+
+            draw() {
+                // onGround()가 true일 때만 runOffset 적용하여 그리기
+                let drawY = this.y;
+                if (this.onGround()) {
+                    drawY += Math.sin(this.runAngle) * 3;
+                }
+                
+                // 그림자 (바닥에 있을 때만)
+                if (this.onGround()) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                    ctx.beginPath();
+                    ctx.ellipse(this.x + this.width/2, canvas.height - GROUND_HEIGHT + 5, 30, 10, 0, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                if (this.image) {
+                    ctx.drawImage(this.image, this.x, drawY, this.width, this.height);
+                } else {
+                    // 이미지 로드 실패 시 대체 사각형
+                    ctx.fillStyle = 'red';
+                    ctx.fillRect(this.x, drawY, this.width, this.height);
+                }
+            }
+
+            jump() {
+                if (this.jumpCount < 2) { // 2단 점프 허용
+                    this.vy = JUMP_FORCE;
+                    this.jumpCount++;
+                }
+            }
+
+            onGround() {
+                return this.y >= canvas.height - GROUND_HEIGHT - this.height;
+            }
+        }
+
+        class Obstacle {
+            constructor() {
+                this.width = 50 + Math.random() * 30; // 너비 랜덤
+                this.height = 50 + Math.random() * 50; // 높이 랜덤
+                this.x = canvas.width;
+                this.y = canvas.height - GROUND_HEIGHT - this.height;
+                this.markedForDeletion = false;
+                
+                // 장애물 색상 랜덤 (바위나 상자 느낌)
+                const colors = ['#5d4037', '#795548', '#3e2723'];
+                this.color = colors[Math.floor(Math.random() * colors.length)];
+            }
+
+            update() {
+                this.x -= gameSpeed;
+                if (this.x + this.width < 0) {
+                    this.markedForDeletion = true;
+                }
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                
+                // 테두리
+                ctx.strokeStyle = '#3e2723';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(this.x, this.y, this.width, this.height);
+            }
+        }
+
+        /**
+         * ------------------------------------------------------------------
+         * Core Game Functions
+         * ------------------------------------------------------------------
+         */
+
+        function init() {
+            // UI 요소 참조
+            const charGrid = document.getElementById('char-grid');
+            const startBtn = document.getElementById('start-btn');
+            const loadingText = document.getElementById('loading-text');
+
+            // 이미지 프리로드
+            let loadedCount = 0;
+            imageSources.forEach((src, index) => {
+                const img = new Image();
+                img.src = src;
+                img.onload = () => {
+                    loadedCount++;
+                    if (loadedCount === imageSources.length) {
+                        loadingText.style.display = 'none';
+                        startBtn.disabled = false;
+                    }
+                };
+                // 로컬 환경에서 이미지가 없을 경우를 대비한 에러 처리 (옵션)
+                img.onerror = () => {
+                   console.warn(`이미지를 찾을 수 없습니다: ${src}`);
+                   // 에러가 나도 카운트는 올려서 게임이 멈추지 않게 함
+                   loadedCount++;
+                   if (loadedCount === imageSources.length) startBtn.disabled = false;
+                };
+                
+                characterImages.push(img);
+
+                // UI 그리드 생성
+                const slot = document.createElement('div');
+                slot.className = 'char-slot';
+                if (index === 0) slot.classList.add('selected');
+                
+                // 이미지가 로드되지 않아도 UI에 표시는 되도록 img 태그 생성
+                const slotImg = document.createElement('img');
+                slotImg.src = src;
+                slot.appendChild(slotImg);
+
+                slot.addEventListener('click', () => {
+                    // 선택 UI 업데이트
+                    document.querySelectorAll('.char-slot').forEach(s => s.classList.remove('selected'));
+                    slot.classList.add('selected');
+                    selectedCharIndex = index;
+                });
+
+                charGrid.appendChild(slot);
+            });
+
+            // 버튼 이벤트 리스너
+            startBtn.addEventListener('click', startGame);
+            document.getElementById('restart-btn').addEventListener('click', resetGame);
+            
+            // 조작 이벤트 리스너
+            window.addEventListener('keydown', (e) => {
+                if (currentState === STATE.PLAYING) {
+                    if (e.code === 'Space' || e.code === 'ArrowUp') {
+                        player.jump();
+                    }
+                } else if (currentState === STATE.GAMEOVER && e.code === 'Enter') {
+                    resetGame();
+                }
+            });
+
+            // 모바일 터치 지원
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault(); // 스크롤 방지
+                if (currentState === STATE.PLAYING) {
+                    player.jump();
+                }
+            }, {passive: false});
+        }
+
+        function startGame() {
+            document.getElementById('start-screen').classList.add('hidden');
+            document.getElementById('score-board').style.display = 'block';
+            currentState = STATE.PLAYING;
+            
+            // 게임 초기화
+            player = new Player();
+            obstacles = [];
+            score = 0;
+            gameSpeed = 5;
+            gameFrame = 0;
+            
+            animate();
+        }
+
+        function resetGame() {
+            document.getElementById('game-over-screen').classList.add('hidden');
+            document.getElementById('start-screen').classList.remove('hidden');
+            document.getElementById('score-board').style.display = 'none';
+            currentState = STATE.START;
+            cancelAnimationFrame(animationId);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+
+        function handleObstacles() {
+            // 장애물 생성 주기 (속도가 빨라질수록 더 자주 나옴)
+            // 프레임 100마다 생성하되 랜덤성 추가
+            if (gameFrame % Math.floor(100 + Math.random() * 50) === 0) {
+                obstacles.push(new Obstacle());
+            }
+
+            for (let i = 0; i < obstacles.length; i++) {
+                obstacles[i].update();
+                obstacles[i].draw();
+            }
+
+            // 화면 밖으로 나간 장애물 제거
+            obstacles = obstacles.filter(obs => !obs.markedForDeletion);
+        }
+
+        function checkCollision() {
+            for (let i = 0; i < obstacles.length; i++) {
+                const obs = obstacles[i];
+                // 간단한 AABB 충돌 감지 (히트박스를 약간 줄여서 관대하게 판정)
+                const hitX = player.x + 10;
+                const hitY = player.y + 10;
+                const hitW = player.width - 20;
+                const hitH = player.height - 20;
+
+                if (
+                    hitX < obs.x + obs.width &&
+                    hitX + hitW > obs.x &&
+                    hitY < obs.y + obs.height &&
+                    hitY + hitH > obs.y
+                ) {
+                    // 충돌 발생!
+                    gameOver();
+                }
+            }
+        }
+
+        function gameOver() {
+            currentState = STATE.GAMEOVER;
+            document.getElementById('game-over-screen').classList.remove('hidden');
+            document.getElementById('final-score').innerText = Math.floor(score);
+        }
+
+        function drawBackground() {
+            // 바닥 그리기
+            ctx.fillStyle = '#654321'; // 흙색
+            ctx.fillRect(0, canvas.height - GROUND_HEIGHT, canvas.width, GROUND_HEIGHT);
+            
+            // 바닥 잔디 라인
+            ctx.fillStyle = '#2ecc71'; // 잔디색
+            ctx.fillRect(0, canvas.height - GROUND_HEIGHT, canvas.width, 10);
+        }
+
+        function drawScore() {
+            document.getElementById('score-board').innerText = `SCORE: ${Math.floor(score)}`;
+        }
+
+        function animate() {
+            if (currentState !== STATE.PLAYING) return;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 배경 -> 장애물 -> 플레이어 순으로 그리기
+            drawBackground();
+            
+            handleObstacles();
+            
+            player.update();
+            player.draw();
+            
+            checkCollision();
+
+            // 점수 및 난이도 증가
+            score += 0.1; // 프레임당 점수
+            gameFrame++;
+            
+            // 시간이 지날수록 속도 증가 (500프레임마다 0.5씩)
+            if (gameFrame % 500 === 0) {
+                gameSpeed += 0.5;
+            }
+
+            drawScore();
+
+            if (currentState === STATE.PLAYING) {
+                animationId = requestAnimationFrame(animate);
+            }
+        }
+
+        // --- 실행 ---
+        window.onload = init;
+
+    </script>
+</body>
+</html>
